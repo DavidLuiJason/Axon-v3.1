@@ -3,6 +3,7 @@ import {createRoot} from 'react-dom/client';
 import App from './App.tsx';
 import './index.css';
 import { workloadManager, runRuntimeVerificationSuite } from './lib/runtime';
+import { animationCoordinator, runRenderingVerificationSuite } from './lib/rendering';
 
 // Initialize AXON Central Runtime & expose unobtrusive developer diagnostics
 if (typeof window !== 'undefined') {
@@ -14,6 +15,12 @@ if (typeof window !== 'undefined') {
     run: (cfg: any) => workloadManager.run(cfg),
     cancel: (id: string, reason?: string) => workloadManager.cancelTask(id, reason),
     runVerificationSuite: () => runRuntimeVerificationSuite(),
+  };
+  (window as any).__AXON_RENDERING__ = {
+    coordinator: animationCoordinator,
+    getDiagnostics: () => animationCoordinator.getDiagnostics(),
+    cancelAll: (reason?: string) => animationCoordinator.cancelAll(reason),
+    runVerificationSuite: () => runRenderingVerificationSuite(),
   };
 }
 

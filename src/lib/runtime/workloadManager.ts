@@ -482,6 +482,10 @@ export class WorkloadManager {
     }
   }
 
+  getResourceMonitor(): ResourceMonitor {
+    return this.resourceMonitor;
+  }
+
   clearHistory(): void {
     this.recentTasks = [];
   }
