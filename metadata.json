@@ -1,0 +1,6 @@
+{
+  "name": "AXON",
+  "description": "AI-powered workspace for a smartphone featuring dual-pane interface, customizable icon & avatar systems, beginner-friendly coding assistant, conditional rules engine, storage manifest with device-aware quota budgeting, and pixel-accurate interface capture & export.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
