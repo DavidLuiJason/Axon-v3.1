@@ -67,6 +67,12 @@ export class AnimationCoordinator {
   private currentFps = 60;
   private totalFrameDrops = 0;
 
+  // Subsystem ON/OFF state flags and suspension registries
+  private viewerAnimationEnabled = true;
+  private backgroundAnimationEnabled = true;
+  private viewerSuspendedIds = new Set<string>();
+  private bgSuspendedIds = new Set<string>();
+
   private resourceMonitor: ResourceMonitor;
   private unsubscribeResourceMonitor: () => void;
   private resourceState: ResourceState;
@@ -95,8 +101,121 @@ export class AnimationCoordinator {
   }
 
   /**
+   * Determine whether any animations are currently running and permitted to tick.
+   */
+  private hasActiveRunningWork(): boolean {
+    for (const anim of this.animations.values()) {
+      if (anim.status === 'running') {
+        if (anim.priority === AnimationPriority.INTERACTIVE_VIEWER && !this.viewerAnimationEnabled) {
+          continue;
+        }
+        if (anim.priority === AnimationPriority.BACKGROUND && !this.backgroundAnimationEnabled) {
+          continue;
+        }
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /**
+   * Check if Viewer Animation system is enabled.
+   */
+  isViewerAnimationEnabled(): boolean {
+    return this.viewerAnimationEnabled;
+  }
+
+  /**
+   * Check if Background Animation system is enabled.
+   */
+  isBackgroundAnimationEnabled(): boolean {
+    return this.backgroundAnimationEnabled;
+  }
+
+  /**
+   * Control the Viewer Animation system workload and lifecycle.
+   * When OFF, viewer animation work stops/suspends cleanly and releases unnecessary animation resources (stopping RAF).
+   * When ON, viewer animations safely resume without creating duplicate loops.
+   */
+  setViewerAnimationEnabled(enabled: boolean): void {
+    if (this.viewerAnimationEnabled === enabled) return;
+    this.viewerAnimationEnabled = enabled;
+
+    if (!enabled) {
+      // Suspend all active running viewer animations
+      for (const [id, anim] of this.animations) {
+        if (anim.priority === AnimationPriority.INTERACTIVE_VIEWER && anim.status === 'running') {
+          this.viewerSuspendedIds.add(id);
+          anim.pause();
+        }
+      }
+      // If no running animations remain across any priority, sleep the RAF heartbeat immediately
+      if (!this.hasActiveRunningWork() && this.isRafActive) {
+        this.stopHeartbeat();
+      }
+    } else {
+      // Safely resume previously suspended viewer animations
+      for (const id of this.viewerSuspendedIds) {
+        const anim = this.animations.get(id);
+        if (anim && anim.status === 'paused') {
+          anim.resume();
+        }
+      }
+      this.viewerSuspendedIds.clear();
+
+      // Start heartbeat if active running work exists (guaranteed non-duplicate by startHeartbeat())
+      if (this.hasActiveRunningWork() && !this.isRafActive) {
+        this.startHeartbeat();
+      }
+    }
+
+    this.notifyDiagnostics();
+  }
+
+  /**
+   * Control the Background Animation system workload and lifecycle.
+   * When OFF, background animation work stops/suspends cleanly and releases unnecessary animation resources (stopping RAF).
+   * When ON, background animations safely resume without creating duplicate loops.
+   */
+  setBackgroundAnimationEnabled(enabled: boolean): void {
+    if (this.backgroundAnimationEnabled === enabled) return;
+    this.backgroundAnimationEnabled = enabled;
+
+    if (!enabled) {
+      // Suspend all active running background animations
+      for (const [id, anim] of this.animations) {
+        if (anim.priority === AnimationPriority.BACKGROUND && anim.status === 'running') {
+          this.bgSuspendedIds.add(id);
+          anim.pause();
+        }
+      }
+      // If no running animations remain across any priority, sleep the RAF heartbeat immediately
+      if (!this.hasActiveRunningWork() && this.isRafActive) {
+        this.stopHeartbeat();
+      }
+    } else {
+      // Safely resume previously suspended background animations
+      for (const id of this.bgSuspendedIds) {
+        const anim = this.animations.get(id);
+        if (anim && anim.status === 'paused') {
+          anim.resume();
+        }
+      }
+      this.bgSuspendedIds.clear();
+
+      // Start heartbeat if active running work exists
+      if (this.hasActiveRunningWork() && !this.isRafActive) {
+        this.startHeartbeat();
+      }
+    }
+
+    this.notifyDiagnostics();
+  }
+
+  /**
    * Register a new animation into the central coordinator.
-   * If the RAF loop is currently dormant, automatically wakes it up.
+   * If the subsystem for this priority is currently disabled, suspends it immediately.
+   * If the RAF loop is currently dormant and active work exists, wakes it up.
    */
   register(anim: RegisteredAnimation): void {
     if (this.isDestroyed) {
@@ -104,10 +223,19 @@ export class AnimationCoordinator {
       return;
     }
 
+    // If corresponding animation subsystem is currently OFF, suspend it on registration
+    if (anim.priority === AnimationPriority.INTERACTIVE_VIEWER && !this.viewerAnimationEnabled) {
+      anim.pause();
+      this.viewerSuspendedIds.add(anim.id);
+    } else if (anim.priority === AnimationPriority.BACKGROUND && !this.backgroundAnimationEnabled) {
+      anim.pause();
+      this.bgSuspendedIds.add(anim.id);
+    }
+
     this.animations.set(anim.id, anim);
 
-    // Wake up RAF loop if dormant
-    if (!this.isRafActive && this.animations.size > 0) {
+    // Wake up RAF loop if dormant and active running work exists
+    if (!this.isRafActive && this.hasActiveRunningWork()) {
       this.startHeartbeat();
     }
 
@@ -116,12 +244,14 @@ export class AnimationCoordinator {
 
   /**
    * Unregister an animation.
-   * If no animations remain, the RAF loop immediately goes to sleep (zero CPU usage).
+   * If no active running animations remain, the RAF loop immediately goes to sleep (zero CPU usage).
    */
   unregister(id: string): boolean {
+    this.viewerSuspendedIds.delete(id);
+    this.bgSuspendedIds.delete(id);
     const removed = this.animations.delete(id);
 
-    if (this.animations.size === 0 && this.isRafActive) {
+    if (!this.hasActiveRunningWork() && this.isRafActive) {
       this.stopHeartbeat();
     }
 
@@ -196,6 +326,14 @@ export class AnimationCoordinator {
         continue;
       }
 
+      // Check system-level toggle switches: if subsystem is disabled, skip frame execution
+      if (anim.priority === AnimationPriority.INTERACTIVE_VIEWER && !this.viewerAnimationEnabled) {
+        continue;
+      }
+      if (anim.priority === AnimationPriority.BACKGROUND && !this.backgroundAnimationEnabled) {
+        continue;
+      }
+
       // 1. Application Visibility Check
       if (!isAppVisible && anim.pauseWhenHidden) {
         // App is in background: skip visual tick to conserve battery and CPU
@@ -246,8 +384,8 @@ export class AnimationCoordinator {
       this.animations.delete(id);
     }
 
-    // If all animations completed or cancelled, put heartbeat to sleep
-    if (this.animations.size === 0) {
+    // If all animations completed or no active running work remains, put heartbeat to sleep
+    if (!this.hasActiveRunningWork()) {
       this.stopHeartbeat();
       this.notifyDiagnostics();
       return;
@@ -325,9 +463,9 @@ export class AnimationCoordinator {
 
     for (const anim of this.animations.values()) {
       if (anim.status === 'running') {
-        if (anim.priority === AnimationPriority.INTERACTIVE_VIEWER) {
+        if (anim.priority === AnimationPriority.INTERACTIVE_VIEWER && this.viewerAnimationEnabled) {
           viewerCount++;
-        } else {
+        } else if (anim.priority === AnimationPriority.BACKGROUND && this.backgroundAnimationEnabled) {
           bgCount++;
         }
       }
@@ -345,6 +483,8 @@ export class AnimationCoordinator {
       isBackgroundThrottled: this.resourceState.isUserInteracting || this.resourceState.pressureLevel === 'elevated',
       isUserInteracting: this.resourceState.isUserInteracting,
       isAppVisible: this.resourceState.isAppVisible,
+      isViewerAnimationEnabled: this.viewerAnimationEnabled,
+      isBackgroundAnimationEnabled: this.backgroundAnimationEnabled,
     };
   }
 

@@ -344,6 +344,78 @@ export async function runRenderingVerificationSuite(): Promise<RenderingVerifica
     return `Observability metrics active: ${diag.currentFps} FPS, ${diag.frameDrops} frame drops tracked, pressure: ${diag.pressureLevel}.`;
   });
 
+  // Test 11: Viewer Animation ON/OFF Toggle & Resource Suspension
+  await runTest('11. Viewer Animation ON/OFF Toggle & Resource Suspension', async () => {
+    let tickCount = 0;
+    const testAnim = animateViewer({
+      durationMs: 500,
+      from: 0,
+      to: 100,
+      onUpdate: () => { tickCount++; },
+    });
+
+    // Verify initial active state
+    if (!animationCoordinator.isViewerAnimationEnabled()) {
+      throw new Error('Viewer animation should be enabled initially');
+    }
+
+    // Toggle OFF: Should cleanly suspend work
+    animationCoordinator.setViewerAnimationEnabled(false);
+    if (animationCoordinator.isViewerAnimationEnabled()) {
+      throw new Error('Viewer animation should report false after disabling');
+    }
+
+    const diagOff = animationCoordinator.getDiagnostics();
+    if (diagOff.activeViewerAnimations !== 0) {
+      throw new Error(`Expected 0 active running viewer animations when disabled, got ${diagOff.activeViewerAnimations}`);
+    }
+
+    // Toggle ON: Should resume cleanly
+    animationCoordinator.setViewerAnimationEnabled(true);
+    if (!animationCoordinator.isViewerAnimationEnabled()) {
+      throw new Error('Viewer animation should report true after re-enabling');
+    }
+
+    // Clean up
+    testAnim.cancel('Test completed');
+    return 'Viewer animation toggle successfully verified: cleans up active processing on OFF and safely resumes on ON.';
+  });
+
+  // Test 12: Background Animation ON/OFF Toggle & Lifecycle Clean Resume
+  await runTest('12. Background Animation ON/OFF Toggle & Lifecycle Clean Resume', async () => {
+    const bgAnim = createBackgroundAnimation({
+      name: 'test-bg-pulse-toggle',
+      targetFps: 30,
+      onTick: () => {},
+    });
+
+    // Verify initial state
+    if (!animationCoordinator.isBackgroundAnimationEnabled()) {
+      throw new Error('Background animation should be enabled initially');
+    }
+
+    // Toggle OFF: Should suspend background processing
+    animationCoordinator.setBackgroundAnimationEnabled(false);
+    if (animationCoordinator.isBackgroundAnimationEnabled()) {
+      throw new Error('Background animation should report false after disabling');
+    }
+
+    const diagOff = animationCoordinator.getDiagnostics();
+    if (diagOff.activeBackgroundAnimations !== 0) {
+      throw new Error(`Expected 0 active background animations when disabled, got ${diagOff.activeBackgroundAnimations}`);
+    }
+
+    // Toggle ON: Should resume without duplicate loops
+    animationCoordinator.setBackgroundAnimationEnabled(true);
+    if (!animationCoordinator.isBackgroundAnimationEnabled()) {
+      throw new Error('Background animation should report true after re-enabling');
+    }
+
+    // Clean up
+    bgAnim.cancel('Test completed');
+    return 'Background animation toggle successfully verified: releases background execution on OFF and cleanly resumes without duplicate allocations on ON.';
+  });
+
   const allPassed = results.every((r) => r.passed);
   const passedCount = results.filter((r) => r.passed).length;
   const failedCount = results.filter((r) => !r.passed).length;

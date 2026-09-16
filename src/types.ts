@@ -425,6 +425,8 @@ export interface GeneralSettings {
   deleteConfirmationTimerEnabled: boolean;
   userReadingSpeedWpm: number;
   aiCallMode: 'single' | 'multi' | string;
+  viewerAnimationEnabled?: boolean;
+  backgroundAnimationEnabled?: boolean;
 }
 
 export interface AppStateData {
@@ -439,6 +441,8 @@ export interface AppStateData {
     activeProjectId?: string;
     storageBudget?: StorageBudgetConfig;
     generalSettings?: GeneralSettings;
+    viewerAnimationEnabled?: boolean;
+    backgroundAnimationEnabled?: boolean;
   };
   projects?: ProjectItem[];
   projectActivities?: ProjectActivityEvent[];

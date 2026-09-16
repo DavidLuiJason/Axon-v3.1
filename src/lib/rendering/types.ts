@@ -120,4 +120,6 @@ export interface RenderingDiagnostics {
   isBackgroundThrottled: boolean;
   isUserInteracting: boolean;
   isAppVisible: boolean;
+  isViewerAnimationEnabled?: boolean;
+  isBackgroundAnimationEnabled?: boolean;
 }
